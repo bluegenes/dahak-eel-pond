@@ -1,5 +1,69 @@
-include: "read_filtering.settings"
-include: "biocontainers.rule"
-include: "fetch_reads.rule"
-include: "pre_post_assessment.rule"
-include: "quality_trimming.rule"
+import pandas as pd
+from utils import container_image_is_external, container_image_name
+from snakemake.utils import validate, min_version
+min_version("5.1.2") #minimum snakemake version
+
+
+# note: should validate the config files within taco!
+samples = pd.read_table(config["samples"]).set_index("sample", drop=False)
+#validate(samples, schema="schemas/samples.schema.yaml")
+
+units = pd.read_table(config["samples"], dtype=str).set_index(["sample", "unit"], drop=False)
+units.index = units.index.set_levels([i.astype(str) for i in units.index.levels])  # enforce str in index
+#validate(units, schema="schemas/units.schema.yaml")
+
+try:
+    base = config['basename']
+except:
+    print("please input a basename for this analysis")
+
+#get biocontainer info
+try:
+    biocontainers = config['biocontainers']
+except:
+    biocontainers = {}
+
+# build file extensions from suffix info (+ set defaults)
+experiment_suffix = config.get('experiment', '')
+readfilt = config['read_filtering']
+trim_suffix = readfilt.get('trim_suffix', 'trimmed')
+
+# output dir
+output_dir = '{}_out{}'.format(base, experiment_suffix)
+logs_dir = os.path.join(output_dir, 'logs')
+trim_dir = os.path.join(output_dir, trim_suffix)
+
+# read filtering workflow rules
+#include: "biocontainers.rule"
+#include: "read_filtering.settings"
+#include: "fetch_reads.rule"
+#include: "pre_post_assessment.rule"
+include: "trimmomatic_pe.rule"
+#include: "interleave.rule"
+
+def get_targets(units, trim_dir='trimmed'): #(units, trim_dir = 'trimmed'):
+    """
+    Use the sample info provided in the tsv file 
+    to generate required targets for each workflow
+    """
+    #currently only working for PE files (just need to ask if single/pe, then return appropriate
+    trim_targets = []
+    for s, u in units.iterrows():
+        sample, unit = u['sample'],u['unit']
+        #trim_targets.append(os.path.join(trim_dir, '{}_{}_trim.txt'.format(sample,unit)))
+        trim_targets.append(os.path.join(trim_dir, '{}_{}_1.trim.fq.gz'.format(sample,unit)))
+        #check pe vs se here
+        trim_targets.append(os.path.join(trim_dir, '{}_{}_2.trim.fq.gz'.format(sample,unit)))
+    return trim_targets
+
+
+TARGETS = get_targets(units, trim_dir)
+
+rule all:
+    input: TARGETS
+
+
+# these suffixes can go in the individual files:
+ #fastqc_suffix = config.get(fastq_suffix, 'fastqc')
+ #trim_suffix = config.get(trim_suffix, 'trim')
+ #interleave_suffix = config.get(interleave_suffix, 'pe')
