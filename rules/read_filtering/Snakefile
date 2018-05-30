@@ -12,9 +12,11 @@ units.index = units.index.set_levels([i.astype(str) for i in units.index.levels]
 #validate(units, schema="schemas/units.schema.yaml")
 
 units['read_type'] = np.where(units['fq2'].isna(), 'se', 'pe') #PE,SE
-paired = units[units.read_type == 'pe']
-single = units[units.read_type == 'se']
+#paired = units[units.read_type == 'pe']
+#single = units[units.read_type == 'se']
 
+def is_single_end(sample, unit, end):
+    return units.loc[(sample,unit)]['read_type'] == 'se' 
 
 try:
     base = config['basename']
@@ -22,52 +24,65 @@ except:
     print("please input a basename for this analysis")
 
 #get biocontainer info
-try:
-    biocontainers = config['biocontainers']
-except:
-    biocontainers = {}
+#try:
+#    biocontainers = config['biocontainers']
+#except:
+#    biocontainers = {}
 
 # build file extensions from suffix info (+ set defaults)
 experiment_suffix = config.get('experiment', '')
 readfilt = config['read_filtering']
 trim_suffix = readfilt.get('trim_suffix', 'trimmed')
+read_qual = readfilt['quality_assessment']
+#fastqc_suffix = read_qual.get('qc_dir', 'qc')
 
-# output dir
-output_dir = '{}_out{}'.format(base, experiment_suffix)
-logs_dir = os.path.join(output_dir, 'logs')
-trim_dir = os.path.join(output_dir, trim_suffix)
+# build directory info
+OUT_DIR = '{}_out{}'.format(base, experiment_suffix)
+LOGS_DIR = os.path.join(OUT_DIR, 'logs')
+TRIM_DIR = os.path.join(OUT_DIR, trim_suffix)
+QC_DIR = os.path.join(OUT_DIR, 'qc')
 
 # read filtering workflow rules
 #include: "biocontainers.rule"
 #include: "read_filtering.settings"
 #include: "fetch_reads.rule"
 #include: "pre_post_assessment.rule"
+include: "fastqc.rule"
+add_fastqc_targs = True
 include: "trimmomatic.rule"
+#add_trim_targs = True
 #include: "interleave.rule"
 
-def get_targets(units, trim_dir='trimmed'): 
+def get_targets(units, TRIM_DIR, QC_DIR, fastqc_targs = False): 
     """
     Use the sample info provided in the tsv file 
     to generate required targets for each workflow
     """
-    #currently only working for PE files (just need to ask if single/pe, then return appropriate
+    #pre_trim_fastqc_targets = []
+    post_trim_fastqc_targets = []
     trim_targets = []
     for s, u in units.iterrows():
         sample, unit, read_type = u['sample'],u['unit'],u['read_type']
-        #trim_targets.append(os.path.join(trim_dir, '{}_{}_trim.txt'.format(sample,unit)))
-        trim_targets.append(os.path.join(trim_dir, '{}_{}_1.trim.fq.gz'.format(sample,unit)))
+        trim_targets.append(os.path.join(TRIM_DIR, '{}_{}_1.trim.fq.gz'.format(sample,unit)))
+        if fastqc_targs:
+            post_trim_fastqc_targets.append(os.path.join(QC_DIR, '{}_{}_1.trim_fastqc.zip'.format(sample,unit)))
+            post_trim_fastqc_targets.append(os.path.join(QC_DIR, '{}_{}_1.trim_fastqc.html'.format(sample,unit)))
         if read_type == 'pe':
-            trim_targets.append(os.path.join(trim_dir, '{}_{}_2.trim.fq.gz'.format(sample,unit)))
-    return trim_targets
+            trim_targets.append(os.path.join(TRIM_DIR, '{}_{}_2.trim.fq.gz'.format(sample,unit)))
+            if fastqc_targs:
+                post_trim_fastqc_targets.append(os.path.join(QC_DIR, '{}_{}_2.trim_fastqc.zip'.format(sample,unit)))
+                post_trim_fastqc_targets.append(os.path.join(QC_DIR, '{}_{}_2.trim_fastqc.html'.format(sample,unit)))
+    targs = trim_targets + post_trim_fastqc_targets
+    #print("  trim_targ: ".join(trim_targets))
+    #print("  fastqc_targ: ".join(post_trim_fastqc_targets))
+    return targs
 
 
-TARGETS = get_targets(units, trim_dir)
 
+
+TARGETS = get_targets(units, TRIM_DIR,QC_DIR, add_fastqc_targs)
+#print(TARGETS)
 rule all:
     input: TARGETS
 
 
-# these suffixes can go in the individual files:
- #fastqc_suffix = config.get(fastq_suffix, 'fastqc')
- #trim_suffix = config.get(trim_suffix, 'trim')
- #interleave_suffix = config.get(interleave_suffix, 'pe')
